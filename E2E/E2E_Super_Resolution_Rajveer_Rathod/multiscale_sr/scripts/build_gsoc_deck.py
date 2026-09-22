@@ -43,12 +43,47 @@ TEMPLATE = r"""<!DOCTYPE html>
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;}
-  .deck{max-width:1180px;margin:0 auto;padding:0 16px}
-  .slide{
-    background:var(--panel);border:1px solid var(--line);border-radius:12px;
-    padding:38px 44px;margin:26px 0;min-height:620px;
-    display:flex;flex-direction:column;
+  html,body{height:100%;overflow:hidden}
+  /* Filmstrip: all slides in one row, translated horizontally. Transform
+     (not scroll) so transitions are GPU-composited and cannot be nudged
+     out of alignment by a stray trackpad gesture mid-presentation. */
+  .deck{
+    display:flex;flex-wrap:nowrap;height:100vh;width:100vw;
+    transition:transform .38s cubic-bezier(.4,0,.2,1);will-change:transform;
   }
+  .slide{
+    flex:0 0 100vw;width:100vw;height:100vh;
+    background:var(--panel);border:0;border-radius:0;
+    padding:clamp(28px,4.2vh,52px) clamp(34px,5vw,86px);margin:0;
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  /* Scale type to viewport so a slide never overflows on a projector. */
+  .slide{font-size:clamp(13px,1.05vw,17px)}
+  /* Compact the vertical rhythm: at 16:9 a slide has far less height than
+     the old scrolling layout, and overflow is now clipped rather than
+     scrollable, so margins are the first thing to give. */
+  h1{font-size:clamp(30px,3.6vw,46px);margin-bottom:.22em}
+  .sub{margin-bottom:clamp(10px,1.6vh,20px);font-size:clamp(12.5px,1.05vw,16px)}
+  h3{margin:clamp(9px,1.5vh,18px) 0 .35em}
+  ul{margin:.4em 0 .4em 20px}
+  li{margin:clamp(3px,.55vh,7px) 0}
+  p{margin:.45em 0}
+  .note{padding:clamp(8px,1.1vh,13px) 16px;margin:clamp(8px,1.2vh,15px) 0;
+    font-size:clamp(12.5px,1.02vw,15.5px)}
+  .eq{padding:clamp(8px,1.2vh,14px) 16px;margin:clamp(6px,.9vh,11px) 0;
+    font-size:clamp(11.5px,.95vw,14.5px)}
+  .card{padding:clamp(10px,1.4vh,16px)}
+  .cols,.cols3{gap:clamp(12px,1.6vw,26px)}
+  table{margin:clamp(8px,1.2vh,14px) 0}
+  th,td{padding:clamp(5px,.75vh,9px) 12px}
+  figure{margin:clamp(6px,.9vh,10px) 0}
+  .stat{padding:clamp(10px,1.5vh,18px) 12px}
+  h2{font-size:clamp(21px,2.3vw,31px)}
+  h3{font-size:clamp(13px,1.15vw,17px)}
+  p,li{font-size:clamp(13px,1.08vw,17px)}
+  table{font-size:clamp(12px,1vw,15.5px)}
+  .big{font-size:clamp(30px,3.4vw,46px)}
+  figure img{max-height:44vh;object-fit:contain}
   .slide.title{align-items:center;justify-content:center;text-align:center}
   h1{font-size:40px;margin:0 0 10px;letter-spacing:-.02em;line-height:1.15}
   h2{font-size:27px;margin:0 0 6px;letter-spacing:-.01em;color:var(--ink)}
@@ -103,7 +138,16 @@ TEMPLATE = r"""<!DOCTYPE html>
   .foot{margin-top:auto;padding-top:16px;color:var(--muted);font-size:12.5px;
     border-top:1px solid var(--line);display:flex;justify-content:space-between}
   /* toolbar */
-  #bar{position:fixed;bottom:16px;right:16px;display:flex;gap:8px;z-index:99}
+  #prog{position:fixed;top:0;left:0;height:3px;width:0;background:var(--accent);
+    z-index:100;transition:width .38s cubic-bezier(.4,0,.2,1)}
+  #hint{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+    background:rgba(22,27,34,.94);border:1px solid var(--line);border-radius:20px;
+    padding:8px 17px;font-size:13px;color:var(--muted);z-index:99;
+    transition:opacity .8s;pointer-events:none}
+  #hint b{color:var(--accent)}
+  #bar{position:fixed;bottom:16px;right:16px;display:flex;gap:8px;z-index:99;
+    align-items:center;opacity:.28;transition:opacity .2s}
+  #bar:hover{opacity:1}
   #bar button{background:var(--panel);color:var(--ink);border:1px solid var(--line);
     border-radius:7px;padding:9px 15px;font-size:13.5px;cursor:pointer;font-weight:550}
   #bar button:hover{border-color:var(--accent);color:var(--accent)}
@@ -111,9 +155,14 @@ TEMPLATE = r"""<!DOCTYPE html>
     padding:9px 13px;font-size:13px;color:var(--muted);font-family:var(--mono)}
   @media print{
     @page{size:1280px 780px;margin:0}
-    html,body{background:#fff}
-    #bar{display:none!important}
-    .deck{max-width:none;padding:0}
+    html,body{background:#fff;height:auto;overflow:visible}
+    #bar,#hint,#prog{display:none!important}
+    /* Unwind the horizontal filmstrip: for paper the slides must stack
+       vertically again, one per page, with no transform offset. */
+    .deck{display:block;height:auto;width:auto;max-width:none;padding:0;
+      transform:none!important;transition:none}
+    .slide{flex:none;width:auto;font-size:15px}
+    figure img{max-height:none}
     .slide{page-break-after:always;break-after:page;margin:0;border:0;
       border-radius:0;min-height:780px;height:780px;padding:44px 52px;
       background:#fff;overflow:hidden}
@@ -774,39 +823,120 @@ python scripts/pointcloud_figures.py --checkpoint &lt;ckpt&gt; \
 
 </div>
 
+<div id="prog"></div>
+<div id="hint">&larr; &rarr; to navigate &middot; <b>F</b> fullscreen &middot; click edges to advance</div>
 <div id="bar">
+  <button onclick="go(window.__cur()-1)" title="Previous">&larr;</button>
   <span id="pos">1 / 19</span>
-  <button onclick="window.print()">Save as PDF</button>
+  <button onclick="go(window.__cur()+1)" title="Next">&rarr;</button>
+  <button onclick="toggleFull()" title="Fullscreen (F)">Full</button>
+  <button onclick="window.print()">PDF</button>
 </div>
 
 <script>
 (function(){
+  var deck   = document.getElementById('deck');
   var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
-  var pos = document.getElementById('pos');
-  var cur = 0;
-  function nearest(){
-    var best = 0, bd = Infinity;
-    slides.forEach(function(s,i){
-      var d = Math.abs(s.getBoundingClientRect().top - 60);
-      if(d < bd){ bd = d; best = i; }
-    });
-    return best;
+  var pos    = document.getElementById('pos');
+  var prog   = document.getElementById('prog');
+  var hint   = document.getElementById('hint');
+  var n      = slides.length;
+  var cur    = 0;
+
+  function render(){
+    deck.style.transform = 'translateX(' + (-cur * 100) + 'vw)';
+    pos.textContent = (cur + 1) + ' / ' + n;
+    prog.style.width = ((cur) / (n - 1) * 100) + '%';
+    // Keep the URL in sync so a given slide can be linked or reloaded into.
+    if (history.replaceState) history.replaceState(null, '', '#' + (cur + 1));
   }
-  function render(){ pos.textContent = (cur+1) + ' / ' + slides.length; }
   function go(i){
-    cur = Math.max(0, Math.min(slides.length-1, i));
-    slides[cur].scrollIntoView({behavior:'smooth', block:'start'});
+    var t = Math.max(0, Math.min(n - 1, i));
+    if (t === cur) return;
+    cur = t;
     render();
   }
-  window.addEventListener('scroll', function(){ cur = nearest(); render(); }, {passive:true});
+  window.go = go;
+  window.__cur = function(){ return cur; };   // used by the toolbar arrows
+
   document.addEventListener('keydown', function(e){
-    if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key===' '||e.key==='PageDown'){
-      e.preventDefault(); go(nearest()+1);
-    } else if(e.key==='ArrowLeft'||e.key==='ArrowUp'||e.key==='PageUp'){
-      e.preventDefault(); go(nearest()-1);
-    } else if(e.key==='Home'){ e.preventDefault(); go(0); }
-    else if(e.key==='End'){ e.preventDefault(); go(slides.length-1); }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;   // leave Cmd+P etc. alone
+    var k = e.key;
+    if (k === 'ArrowRight' || k === 'ArrowDown' || k === ' ' || k === 'PageDown' || k === 'n'){
+      e.preventDefault(); go(cur + 1);
+    } else if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp' || k === 'p'){
+      e.preventDefault(); go(cur - 1);
+    } else if (k === 'Home'){ e.preventDefault(); go(0); }
+    else if (k === 'End'){ e.preventDefault(); go(n - 1); }
+    else if (k === 'f'){ e.preventDefault(); toggleFull(); }
+    else if (/^[0-9]$/.test(k)){ e.preventDefault(); go(parseInt(k, 10) - 1); }
   });
+
+  function toggleFull(){
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  }
+  window.toggleFull = toggleFull;
+
+  // Touch / trackpad swipe, for presenting from a laptop without a clicker.
+  var x0 = null;
+  document.addEventListener('touchstart', function(e){ x0 = e.touches[0].clientX; }, {passive:true});
+  document.addEventListener('touchend', function(e){
+    if (x0 === null) return;
+    var dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 55) go(cur + (dx < 0 ? 1 : -1));
+    x0 = null;
+  }, {passive:true});
+
+  // Clicking the left/right edge advances, like a normal presentation tool.
+  document.addEventListener('click', function(e){
+    if (e.target.closest('#bar') || e.target.closest('a')) return;
+    var third = window.innerWidth / 3;
+    if (e.clientX > third * 2) go(cur + 1);
+    else if (e.clientX < third) go(cur - 1);
+  });
+
+  // Deep link: open on #7 and land on slide 7.
+  var h = parseInt((location.hash || '').replace('#',''), 10);
+  if (h >= 1 && h <= n) cur = h - 1;
+
+  // Printing needs the transform cleared, then restored afterwards --
+  // otherwise the first page carries the current slide's offset.
+
+
+  // Safety net. CSS clamps handle the common cases, but an unusual window
+  // aspect (or a browser with larger default fonts) can still overflow a
+  // slide -- and overflow is clipped, which would silently hide content
+  // mid-presentation. Measure each slide and scale it down if needed.
+  function fit(){
+    slides.forEach(function(sl){
+      sl.style.transform = '';
+      var pad = parseFloat(getComputedStyle(sl).paddingTop) || 0;
+      var avail = sl.clientHeight - pad * 2;
+      // scrollHeight includes padding; compare like for like.
+      var need = sl.scrollHeight - pad * 2;
+      if (need > avail + 1){
+        var k = Math.max(0.62, avail / need);
+        sl.style.transformOrigin = 'top center';
+        sl.style.transform = 'scale(' + k.toFixed(4) + ')';
+      }
+    });
+  }
+  var rt;
+  window.addEventListener('resize', function(){
+    clearTimeout(rt); rt = setTimeout(function(){ fit(); render(); }, 120);
+  });
+  // Print: clear BOTH the filmstrip offset and any per-slide fit scaling,
+  // then restore both afterwards -- otherwise the first page carries the
+  // current slide's offset, or slides come back unscaled.
+  window.addEventListener('beforeprint', function(){
+    deck.style.transform = 'none';
+    slides.forEach(function(sl){ sl.style.transform = ''; });
+  });
+  window.addEventListener('afterprint', function(){ fit(); render(); });
+
+  setTimeout(function(){ if (hint) hint.style.opacity = '0'; }, 4200);
+  fit();
   render();
 })();
 </script>
