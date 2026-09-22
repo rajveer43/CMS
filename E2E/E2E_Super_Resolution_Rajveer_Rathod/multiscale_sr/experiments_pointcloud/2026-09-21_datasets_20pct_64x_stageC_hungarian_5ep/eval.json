@@ -1,0 +1,10 @@
+{
+  "chamfer": 19.89954562570857,
+  "sinkhorn": 46.35576165955642,
+  "existence": 0.4839627734203448,
+  "channel": 0.8893492197853395,
+  "energy": 0.19139131629604034,
+  "best_val_chamfer": 19.89954562570857,
+  "scale": 64,
+  "dataset": "datasets_20pct"
+}

@@ -8,6 +8,10 @@
 .env
 .env.*
 
+# Virtual environments
+.venv/
+venv/
+
 # Python caches / bytecode
 __pycache__/
 *.py[cod]
@@ -24,6 +28,24 @@ Thumbs.db
 # Per-run training outputs (checkpoints, per-run figures, metrics, samples).
 # These are large and reproducible — keep them out of git.
 experiments/
+
+# Point-cloud runs (experiments_pointcloud/) are handled differently from
+# experiments/ above: the small result files are worth keeping in git, since
+# they are the measured evidence behind the numbers in
+# docs/POINTCLOUD_RESULTS.md and cost nothing to store. Everything bulky or
+# machine-specific is excluded below.
+experiments_pointcloud/**/samples/
+experiments_pointcloud/**/wandb/
+# Per-process resource telemetry: one line every ~30s, machine-specific
+# (pid, RSS, free disk) and of no value to a reader of the repo.
+experiments_pointcloud/**/resources-*.jsonl
+
+# Figures ARE kept: they are small PNGs and they are the visual evidence for
+# docs/POINTCLOUD_RESULTS.md (peak smearing, point-cloud vs raster views).
+
+# Decoded-sample cache. Large (multiple GB) and fully rebuilt on demand from
+# the source parquet files.
+.sr_cache/
 
 # Weights & Biases run logs (also live under experiments/<run>/wandb/).
 wandb/

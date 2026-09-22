@@ -1,0 +1,15 @@
+{
+  "checkpoint": "experiments_pointcloud/2026-09-20_datasets_20pct_64x_pointcloud_64x_20pct_fixed/checkpoints/best.pt",
+  "checkpoint_epoch": 10,
+  "scale": 64,
+  "n": 4000,
+  "n_train": 2000,
+  "n_test": 2000,
+  "auc": {
+    "hr": 0.669156074666218,
+    "lr": 0.5143075870867218,
+    "sr": 0.4746047338806827
+  },
+  "tagging_efficiency_sr_over_hr": 0.7092586495869749,
+  "recovery_fraction_lr_to_hr": -0.2563980690199275
+}

@@ -52,7 +52,10 @@ def test_resume_matches_uninterrupted(tmp_path, monkeypatch, interrupt_at):
     def interrupted_save(payload, path, recovery):
         nonlocal raised
         real_save(payload, path, recovery)
-        steps = payload["progress"][-1] if payload["progress"] else None
+        # progress is a named dict (see train.py's checkpoint()), not a
+        # positional tuple, precisely so a field addition like the point-cloud
+        # losses below cannot silently shift what this index means.
+        steps = payload["progress"]["skipped_steps"] if payload["progress"] else None
         condition = ((interrupt_at == "mid_epoch" and steps == 1)
                      or (interrupt_at == "validation" and steps == 3 and not payload["epoch_complete"])
                      or (interrupt_at == "epoch_boundary" and payload["epoch_complete"]))

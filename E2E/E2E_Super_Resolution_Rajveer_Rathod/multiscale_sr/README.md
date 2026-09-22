@@ -223,6 +223,8 @@ multiscale_sr/
 │   ├── ARCHITECTURE.md
 │   ├── TRAINING_STABILITY.md
 │   ├── POINT_CLOUD_EXPLORATION.md
+│   ├── POINTCLOUD_AUDIT.md      # point-cloud data measurements
+│   ├── POINTCLOUD_RESULTS.md    # point-cloud pipeline results + next steps
 │   ├── NORMALIZING_FLOWS_EXPLORATION.md
 │   ├── BASELINE_AUC_REPRODUCTION.md
 │   ├── COLAB_RELIABILITY.md
@@ -348,7 +350,9 @@ Open threads, in priority order:
 3. **Audit `psnr_norm` in `engine.py`** — see the note under Metrics.
 4. Progressive and stabilized training variants at 128-padded resolution are in progress.
 
-**Point-cloud representation** (raised in mentor review) was explored and is **not recommended before the project deadline** — it requires a parallel data/model/loss/eval pipeline rather than an extension of the current one. Full writeup: [`POINT_CLOUD_EXPLORATION.md`](docs/POINT_CLOUD_EXPLORATION.md).
+**Point-cloud representation** (raised in mentor review) was first assessed as **not recommended before the project deadline** — it requires a parallel data/model/loss/eval pipeline rather than an extension of the current one ([`POINT_CLOUD_EXPLORATION.md`](docs/POINT_CLOUD_EXPLORATION.md)). It has since been **built and measured anyway**, as a second, parallel research effort that leaves the grid pipeline untouched.
+
+Current status: the set-to-set model reaches **74.6% tagging efficiency / −0.8% recovery** at 5 epochs, against the grid GAN's **89.7% / +44.8%**. Three architectural fixes (full-length attention memory, LR-seeded queries, Hungarian target matching) each worked as designed and improved the point-cloud objective clearly — while barely moving the tagging metric. That divergence, and what to try next, is documented in [`POINTCLOUD_RESULTS.md`](docs/POINTCLOUD_RESULTS.md); the data measurements behind it are in [`POINTCLOUD_AUDIT.md`](docs/POINTCLOUD_AUDIT.md).
 
 **Normalizing flows** (raised in mentor review, alongside the physics-loss rework) were also explored: a full flow-based generator replacement is **not recommended before the deadline** (it discards the hard-won adversarial-training stability work for a from-scratch invertible architecture), but a small flow-based physics-consistency loss layered on the current GAN is a reasonable low-risk follow-up once the scalar physics loss (#2) is settled. Full writeup: [`NORMALIZING_FLOWS_EXPLORATION.md`](docs/NORMALIZING_FLOWS_EXPLORATION.md).
 

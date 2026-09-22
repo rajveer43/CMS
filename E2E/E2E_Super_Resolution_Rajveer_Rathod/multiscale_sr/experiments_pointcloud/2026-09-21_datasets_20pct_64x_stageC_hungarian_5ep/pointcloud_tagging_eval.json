@@ -1,0 +1,15 @@
+{
+  "checkpoint": "experiments_pointcloud/2026-09-21_datasets_20pct_64x_stageC_hungarian_5ep/checkpoints/best.pt",
+  "checkpoint_epoch": 5,
+  "scale": 64,
+  "n": 4000,
+  "n_train": 2000,
+  "n_test": 2000,
+  "auc": {
+    "hr": 0.685845923068681,
+    "lr": 0.5130223275664385,
+    "sr": 0.5116965125256476
+  },
+  "tagging_efficiency_sr_over_hr": 0.7460808547729838,
+  "recovery_fraction_lr_to_hr": -0.007671493217913497
+}

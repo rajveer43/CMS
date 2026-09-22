@@ -201,6 +201,10 @@ def evaluate(
     semd_omega_R: float = 1.0,
     semd_beta: float = 1.0,
     semd_chunk: int = 1,
+    pointcloud_topk: int = 128,
+    pointcloud_chunk: int = 1,
+    sinkhorn_eps: float = 4.0,
+    sinkhorn_iters: int = 30,
 ) -> dict[str, float]:
     """Compute val L1 (normalized), PSNR (normalized), energy response, and SEMD.
 
@@ -211,7 +215,12 @@ def evaluate(
     ``semd`` is likewise computed unconditionally — including in runs that do
     not optimize it (``--lambda-semd 0.0``) — so that correlation data against
     tagging efficiency accumulates from every run rather than only from
-    SEMD-enabled ones.
+    SEMD-enabled ones. ``chamfer`` and ``sinkhorn`` (Stage 2 point-cloud
+    losses, see ``multiscale_sr/pointcloud/losses.py``) follow the same
+    convention, for the same reason: the checkpoint comparison this project
+    already does (SEMD vs. tagging efficiency, `val_l1` vs. tagging
+    efficiency) needs these numbers from grid-only runs too, not only from
+    runs that optimize them.
     """
     generator.eval()
     l1_sum = 0.0
@@ -223,6 +232,8 @@ def evaluate(
     peak_sum = 0.0
     nonzero_sum = 0.0
     semd_sum = 0.0
+    chamfer_sum = 0.0
+    sinkhorn_sum = 0.0
     n_batches = 0
 
     for batch in loader:
@@ -248,6 +259,19 @@ def evaluate(
             fake_raw, hr_raw, topk=semd_topk, omega_R=semd_omega_R, beta=semd_beta,
             chunk=semd_chunk,
         ).mean().item()
+        # Local import: engine.py is imported by both the grid pipeline and
+        # this module's own callers, but pointcloud/ has no reason to import
+        # engine at module scope elsewhere, so this keeps the dependency
+        # one-directional (pointcloud depends on engine, not vice versa) and
+        # avoids a circular import at the top of the file.
+        from .pointcloud.losses import chamfer_loss, sinkhorn_loss
+        chamfer_sum += chamfer_loss(
+            fake_raw, hr_raw, topk=pointcloud_topk, chunk=pointcloud_chunk,
+        ).item()
+        sinkhorn_sum += sinkhorn_loss(
+            fake_raw, hr_raw, topk=pointcloud_topk, eps=sinkhorn_eps,
+            iters=sinkhorn_iters, chunk=pointcloud_chunk,
+        ).item()
 
         n_batches += 1
         if max_batches is not None and n_batches >= max_batches:
@@ -265,6 +289,8 @@ def evaluate(
         "peak_ratio": peak_sum / n,
         "nonzero_ratio": nonzero_sum / n,
         "semd": semd_sum / n,
+        "chamfer": chamfer_sum / n,
+        "sinkhorn": sinkhorn_sum / n,
     }
 
 

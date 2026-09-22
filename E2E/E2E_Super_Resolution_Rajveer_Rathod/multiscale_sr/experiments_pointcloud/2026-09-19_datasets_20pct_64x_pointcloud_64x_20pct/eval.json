@@ -1,0 +1,9 @@
+{
+  "chamfer": 13.787857960010397,
+  "existence": 0.2090709327623762,
+  "channel": 0.37642499787368994,
+  "energy": 0.1303905422060654,
+  "best_val_chamfer": 13.787857960010397,
+  "scale": 64,
+  "dataset": "datasets_20pct"
+}

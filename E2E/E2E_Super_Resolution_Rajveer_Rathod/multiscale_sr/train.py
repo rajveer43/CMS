@@ -46,6 +46,7 @@ from multiscale_sr.utils import resolve_env, seed_everything
 from multiscale_sr.wandb_logger import WandbLogger, load_env
 from multiscale_sr.recovery import Diagnostics, save_checkpoint
 from multiscale_sr.training_state import capture_rng, restore_rng, validate_resume, adversarial_weight, noise_std as scheduled_noise
+from multiscale_sr.pointcloud.losses import chamfer_loss, sinkhorn_loss
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
@@ -90,6 +91,26 @@ def build_parser() -> argparse.ArgumentParser:
                    help="SEMD ground-metric exponent: omega_ij = dist_ij ** beta")
     p.add_argument("--semd-chunk", type=int, default=1,
                    help="Samples per SEMD call; cumulative-integral storage scales as chunk * (topk+1)**2")
+    p.add_argument("--lambda-chamfer", type=float, default=0.0,
+                   help="Weight on the point-cloud Chamfer loss (Stage 2 experiment; see "
+                        "multiscale_sr/pointcloud/losses.py). Default 0.0 = OFF, which leaves "
+                        "the loss identical to before this term existed, same convention as "
+                        "--lambda-semd. Operates on the SAME CNN generator's dense output, "
+                        "extracted as a top-K point set -- no architecture change.")
+    p.add_argument("--lambda-sinkhorn", type=float, default=0.0,
+                   help="Weight on the point-cloud Sinkhorn (entropic OT) loss. Default 0.0 = "
+                        "OFF. Prefer this over --lambda-chamfer if Chamfer produces clumped/"
+                        "blurry SR point sets (a documented Chamfer failure mode) -- Sinkhorn's "
+                        "soft assignment discourages many-to-one matches.")
+    p.add_argument("--pointcloud-topk", type=int, default=128,
+                   help="Brightest pixels kept per image for --lambda-chamfer/--lambda-sinkhorn "
+                        "(same default as --semd-topk for comparability)")
+    p.add_argument("--pointcloud-chunk", type=int, default=1,
+                   help="Samples per Chamfer/Sinkhorn call; both are O(K^2) per sample like SEMD")
+    p.add_argument("--sinkhorn-eps", type=float, default=4.0,
+                   help="Entropic regularisation for --lambda-sinkhorn, in squared-pixel units")
+    p.add_argument("--sinkhorn-iters", type=int, default=30,
+                   help="Sinkhorn iterations for --lambda-sinkhorn")
     p.add_argument("--semd-loss-raw", action="store_true",
                    help="Use UNNORMALIZED SEMD in the loss. Off by default because raw SEMD "
                         "is ~1e8 on this data vs ~2 for L1, so a plausible-looking lambda "
@@ -172,7 +193,8 @@ def resolve_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--scale is required (via CLI or --config)")
     if args.data_dir is None:
         parser.error("--data-dir is required (via CLI or --config)")
-    for name in ("epochs", "batch_size", "log_every", "sample_every", "semd_chunk", "semd_topk", "g_steps_per_d"):
+    for name in ("epochs", "batch_size", "log_every", "sample_every", "semd_chunk", "semd_topk",
+                 "g_steps_per_d", "pointcloud_topk", "pointcloud_chunk", "sinkhorn_iters"):
         if getattr(args, name) < 1:
             parser.error(f"{name} must be positive")
     for name in ("max_train_batches", "max_val_batches", "max_stats_batches"):
@@ -323,6 +345,7 @@ def train(args: argparse.Namespace) -> None:
         generator.train()
         discriminator.train()
         g_run = d_run = l1_run = phys_run = resp_run = semd_run = 0.0
+        chamfer_run = sinkhorn_run = 0.0
         last_d = 0.0
         seen = 0
         d_updates = 0
@@ -330,9 +353,24 @@ def train(args: argparse.Namespace) -> None:
         epoch_rng = capture_rng()
         skipped_steps = 0
         if resume_state and not resume_state["epoch_complete"]:
+            # Named dict, not a positional tuple: a positional layout risks a
+            # future field addition silently unpacking into the wrong name if
+            # an in-flight checkpoint from before the change is ever resumed.
+            # .get(..., 0.0) covers chamfer/sinkhorn on a checkpoint saved by
+            # an older version of this file that predates those two fields;
+            # validate_resume already rejects any OTHER config mismatch, so
+            # this default only ever applies to these two additive fields.
             state = resume_state["progress"]
-            (g_run, d_run, l1_run, phys_run, resp_run, semd_run, last_d,
-             seen, d_updates, d_eligible, skipped_steps) = state
+            g_run, d_run, l1_run, phys_run, resp_run, semd_run = (
+                state["g_run"], state["d_run"], state["l1_run"],
+                state["phys_run"], state["resp_run"], state["semd_run"],
+            )
+            chamfer_run = state.get("chamfer_run", 0.0)
+            sinkhorn_run = state.get("sinkhorn_run", 0.0)
+            last_d, seen, d_updates, d_eligible, skipped_steps = (
+                state["last_d"], state["seen"], state["d_updates"],
+                state["d_eligible"], state["skipped_steps"],
+            )
             epoch_rng = resume_state["epoch_rng"]
             restore_rng(epoch_rng)
 
@@ -406,6 +444,25 @@ def train(args: argparse.Namespace) -> None:
                 )
                 g_loss = g_loss + args.lambda_semd * semd
                 semd_val = semd.item()
+            # Point-cloud terms (Stage 2 experiment), OFF by default and
+            # guarded exactly like lambda_semd above: computed on the SAME
+            # dense generator output via topk_hits, no architecture change.
+            # See multiscale_sr/pointcloud/losses.py.
+            chamfer_val = 0.0
+            if args.lambda_chamfer > 0.0:
+                chamfer = chamfer_loss(
+                    fake_raw, hr_raw, topk=args.pointcloud_topk, chunk=args.pointcloud_chunk,
+                )
+                g_loss = g_loss + args.lambda_chamfer * chamfer
+                chamfer_val = chamfer.item()
+            sinkhorn_val = 0.0
+            if args.lambda_sinkhorn > 0.0:
+                sinkhorn = sinkhorn_loss(
+                    fake_raw, hr_raw, topk=args.pointcloud_topk, eps=args.sinkhorn_eps,
+                    iters=args.sinkhorn_iters, chunk=args.pointcloud_chunk,
+                )
+                g_loss = g_loss + args.lambda_sinkhorn * sinkhorn
+                sinkhorn_val = sinkhorn.item()
             if adv_active:
                 discriminator.requires_grad_(False)
                 fake_logits_g = discriminator(lr, fake)
@@ -428,13 +485,22 @@ def train(args: argparse.Namespace) -> None:
             phys_run += phys_val * bs
             resp_run += energy_response(fake_raw, hr_raw).mean().item() * bs
             semd_run += semd_val * bs
+            chamfer_run += chamfer_val * bs
+            sinkhorn_run += sinkhorn_val * bs
             diagnostics.state.update(epoch=epoch, batch=step, step=global_step)
             if not math.isfinite(g_val):
                 raise FloatingPointError(f"Non-finite generator loss at epoch {epoch}, batch {step}")
 
+            def _progress(_step=step):
+                return {
+                    "g_run": g_run, "d_run": d_run, "l1_run": l1_run, "phys_run": phys_run,
+                    "resp_run": resp_run, "semd_run": semd_run, "chamfer_run": chamfer_run,
+                    "sinkhorn_run": sinkhorn_run, "last_d": last_d, "seen": seen,
+                    "d_updates": d_updates, "d_eligible": d_eligible, "skipped_steps": _step,
+                }
+
             if time.monotonic() - last_checkpoint >= args.checkpoint_seconds:
-                checkpoint(epoch, False, [g_run, d_run, l1_run, phys_run, resp_run,
-                    semd_run, last_d, seen, d_updates, d_eligible, step], epoch_rng)
+                checkpoint(epoch, False, _progress(), epoch_rng)
                 diagnostics.phase("training", epoch=epoch, step=global_step)
 
             # Per-step logging so W&B curves populate within seconds instead of
@@ -460,8 +526,12 @@ def train(args: argparse.Namespace) -> None:
         if not seen:
             raise ValueError("Training loader produced no samples")
         # Preserve all training updates before validation/SEMD can fail.
-        checkpoint(epoch, False, [g_run, d_run, l1_run, phys_run, resp_run,
-            semd_run, last_d, seen, d_updates, d_eligible, step], epoch_rng)
+        checkpoint(epoch, False, {
+            "g_run": g_run, "d_run": d_run, "l1_run": l1_run, "phys_run": phys_run,
+            "resp_run": resp_run, "semd_run": semd_run, "chamfer_run": chamfer_run,
+            "sinkhorn_run": sinkhorn_run, "last_d": last_d, "seen": seen,
+            "d_updates": d_updates, "d_eligible": d_eligible, "skipped_steps": step,
+        }, epoch_rng)
         denom = seen
         d_skip_frac = 1.0 - (d_updates / d_eligible) if d_eligible else 0.0
         train_metrics = {
@@ -472,6 +542,8 @@ def train(args: argparse.Namespace) -> None:
             "train_phys": phys_run / denom,
             "train_response": resp_run / denom,
             "train_semd": semd_run / denom,
+            "train_chamfer": chamfer_run / denom,
+            "train_sinkhorn": sinkhorn_run / denom,
             "adv_weight": adv_w,
             "d_skip_frac": d_skip_frac,
             "d_input_noise": noise_std,
@@ -482,6 +554,8 @@ def train(args: argparse.Namespace) -> None:
             generator, val_loader, stats, env.device, max_batches=args.max_val_batches,
             semd_topk=args.semd_topk, semd_omega_R=args.semd_omega_R, semd_beta=args.semd_beta,
             semd_chunk=args.semd_chunk,
+            pointcloud_topk=args.pointcloud_topk, pointcloud_chunk=args.pointcloud_chunk,
+            sinkhorn_eps=args.sinkhorn_eps, sinkhorn_iters=args.sinkhorn_iters,
         )
         record = {**train_metrics, **{f"val_{k}": v for k, v in val_metrics.items()}}
 
@@ -510,7 +584,8 @@ def train(args: argparse.Namespace) -> None:
             f"resp={record['val_energy_response']:.3f} "
             f"phys_ratio={record['val_phys_loss_ratio']:.4f} phys_l2={record['val_phys_loss_l2']:.4f} "
             f"peak={record['val_peak_ratio']:.3f} nz={record['val_nonzero_ratio']:.3f} "
-            f"semd={record['val_semd']:.3g} "
+            f"semd={record['val_semd']:.3g} chamfer={record['val_chamfer']:.3g} "
+            f"sinkhorn={record['val_sinkhorn']:.3g} "
             f"advw={adv_w:.2f} dskip={d_skip_frac:.2f} alpha={record['lr_skip_alpha']:.3f}"
         )
         with paths.metrics_jsonl.open("a", encoding="utf-8") as f:
@@ -540,7 +615,9 @@ def train(args: argparse.Namespace) -> None:
     diagnostics.phase("final_validation_semd")
     final_eval = evaluate(generator, val_loader, stats, env.device, max_batches=args.max_val_batches,
         semd_topk=args.semd_topk, semd_omega_R=args.semd_omega_R,
-        semd_beta=args.semd_beta, semd_chunk=args.semd_chunk)
+        semd_beta=args.semd_beta, semd_chunk=args.semd_chunk,
+        pointcloud_topk=args.pointcloud_topk, pointcloud_chunk=args.pointcloud_chunk,
+        sinkhorn_eps=args.sinkhorn_eps, sinkhorn_iters=args.sinkhorn_iters)
     final_eval.update({"best_val_l1": best_val, "scale": args.scale, "dataset": dataset_name})
     paths.eval_json.write_text(json.dumps(final_eval, indent=2), encoding="utf-8")
     wb.set_summary({
